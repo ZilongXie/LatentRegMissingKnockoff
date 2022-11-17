@@ -95,19 +95,35 @@ knockoff.stat <- function(beta, est.scale, bin.ind=NULL, ord.ind=NULL, con.ind=N
 }
 
 # Knockoff selection
+# knockoff.select <- function(w.vec, v=1) {
+#   w.sign <- sign(w.vec)
+#   # Controlling PFER by selecting proper threshold
+#   tau <- 0
+#   for(t in sort(abs(w.vec[w.vec != 0]), decreasing = T)){
+#     if(sum(w.vec <= -t) == v){
+#       tau <- t
+#       break()
+#     }
+#   }
+#   
+#   # The selection indicator vector
+#   select.ind <- (w.vec >= tau) * 1
+#   return(select.ind)
+# }
+
+# Knockoff selection for controlling PFER
 knockoff.select <- function(w.vec, v=1) {
   w.sign <- sign(w.vec)
   # Controlling PFER by selecting proper threshold
-  tau <- 0
-  for(t in sort(abs(w.vec[w.vec != 0]), decreasing = T)){
-    if(sum(w.vec <= -t) == v){
+  tau <- -Inf
+  for(t in sort(abs(w.vec[w.vec != 0]), decreasing = F)){
+    if(1 + sum(w.vec < -t) == v){
       tau <- t
       break()
     }
   }
-  
   # The selection indicator vector
-  select.ind <- (w.vec >= tau) * 1
+  select.ind <- (w.vec > tau) * 1
   return(select.ind)
 }
 
