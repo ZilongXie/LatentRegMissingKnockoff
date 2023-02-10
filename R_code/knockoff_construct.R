@@ -1,105 +1,6 @@
 # Check if positive definite
 is.posdef <- function(X){min(eigen(x = X, symmetric = T, only.values = T)$value) > 0}
 
-# # Full Gibbs sampling for underlying variables
-# Gibbs.sample <- function(X, Omega, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
-#                          bin.params=NULL, ord.params=NULL, con.params=NULL, 
-#                          max_iter=10000, is.print.iter=F, ...) {
-#   N <- dim(X)[1]
-#   p <- dim(X)[2]
-#   miss.mask <- is.na(X)
-#   args <- list(...)
-#   
-#   if (length(bin.ind) + length(ord.ind) + length(con.ind) != dim(X)[2]) {
-#     stop('Dimensions of indices are wrong! Check your input indices.')
-#   }
-# 
-#   if(!is.null(bin.ind)) {
-#     # Thresholds of binary variables
-#     thresh.bin <- list(lower = matrix(-Inf, nrow = N, ncol = length(bin.ind)),
-#                        upper = matrix(Inf, nrow = N, ncol = length(bin.ind)))
-#     for (j in 1:length(bin.ind)) {
-#       bj <- bin.ind[j]
-#       thresh.bin$lower[X[,bj] == 1, j] <- bin.params[j]
-#       thresh.bin$upper[X[,bj] == 0, j] <- bin.params[j]
-#     }
-#   }
-# 
-#   if(!is.null(ord.ind)) {
-#     ord.max <- apply(X[,ord.ind], 2, max, na.rm = T)
-# 
-#     # Thresholds of ordinal variables
-#     thresh.ord <- list(lower = matrix(-Inf, nrow = N, ncol = length(ord.ind)),
-#                        upper = matrix(Inf, nrow = N, ncol = length(ord.ind)))
-#     for (j in 1:length(ord.ind)) {
-#       oj <- ord.ind[j]
-#       for (v in 1:(ord.max[j]+1)) {
-#         if (v > 1){
-#           thresh.ord$lower[which(X[,oj] == v), j] <- ord.params[j, v-1]
-#         }
-#         if (v < (ord.max[j]+1)) {
-#           thresh.ord$upper[which(X[,oj] == v), j] <- ord.params[j, v]
-#         }
-#       }
-#     }
-#   }
-# 
-#   # Allowed to provide initial underlying variables
-#   if (is.null(args$X.under0)) {
-#     X.under <- X.under.init(X, bin.ind, ord.ind, con.ind, thresh.bin, thresh.ord, con.params)
-#   } else {
-#     X.under <- args$X.under0
-#   }
-#   
-#   # The transformation matrix that transforms X.under_{-i} to the post-mean
-#   meantrans.matr <- matrix(nrow = p-1 , ncol = p)
-#   for (i in 1:p) {
-#     meantrans.matr[, i] <- -Omega[i, -i]/Omega[i, i]
-#   }
-# 
-#   # Random scan Gibbs sampling
-#   for (iter in 1:max_iter) {
-#     # Random scan Gibbs sampling
-#     random.scan <- sample(p, p)
-#     for (j in random.scan) {
-#       # Conditional mean and standard deviation
-#       cond.sd <- sqrt(1/Omega[j, j])
-#       cond.mean <- X.under[,-j] %*% meantrans.matr[, j]
-# 
-#       if (j %in% con.ind) {
-#         miss.mask.j <- miss.mask[,j]
-#         X.under[miss.mask.j, j] <- rnorm(mean = cond.mean[miss.mask.j],
-#                                          sd = cond.sd,
-#                                          n = sum(miss.mask.j))
-#       }
-#       if (j %in% bin.ind) {
-#         loc <- which(bin.ind == j)
-#         X.under[, j] <- truncnorm::rtruncnorm(a = thresh.bin$lower[,loc],
-#                                               b = thresh.bin$upper[,loc],
-#                                               mean = cond.mean,
-#                                               sd = cond.sd,
-#                                               n = 1)
-#       }
-#       if (j %in% ord.ind) {
-#         loc <- which(ord.ind == j)
-#         X.under[, j] <- truncnorm::rtruncnorm(a = thresh.ord$lower[,loc],
-#                                               b = thresh.ord$upper[,loc],
-#                                               mean = cond.mean,
-#                                               sd = cond.sd,
-#                                               n = 1)
-#       }
-#     }
-#     
-#     if (is.print.iter) {
-#       print(iter)
-#     }
-#     
-#     #TODO: stopping criterion
-#   }
-# 
-#   return(X.under)
-# }
-
 # Imputed mixed data
 Impute <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                    bin.params=NULL, ord.params=NULL, con.params=NULL) {
@@ -130,7 +31,6 @@ Impute <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
   
   return(X.impute)
 }
-
 
 # MVR knockoffs
 MVR.knockoffs <- function(Sigma, max_iter = 1000){

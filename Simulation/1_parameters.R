@@ -1,7 +1,11 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
+
+################################################################################
 ########################
-## Correlation matrix ##
+## Correlation matrix ##  
 ########################
-N <- 1000
 J <- 60
 p <- 100
 set.seed(123456789)
@@ -57,6 +61,7 @@ ggplot(corrplot, aes(X, Y, fill= Correlation)) +
         axis.title.x = element_blank(),
         axis.title.y = element_blank()) 
 
+
 ########################
 ## Unknown parameters ##
 ########################
@@ -69,14 +74,23 @@ con.params.true$sd <- rep(1, 50)
 bin.params.true <- as.vector(matrix(c(-1.2, -0.3, 0, 0.3, 1.2), nrow = 5, ncol = 10))
 ord.params.true <- NULL
 beta.true <- rep(0, 100)
+# beta.true[c(1,2,21,22,41,51,61,71,81,91)] <- c(1, -1, 1, -1, 0.75, -0.75, 0.5, -0.5, 0.25, -0.25)/5
 
 beta.true[c(1,11,22,32,43,53,64,74,85,95)] <- c(1, -1, 1, -1, 1, -1, 1, -1, 1, -1)/2
+
+#################################
+## Missing at random paramters ##
+#################################
+expit <- function(x) {1/(1+exp(-x))}
+# MAR derived from means of the fifth-block
+# c(-1, 1/20, 1/20, ..., 1/20)
 
 ####################
 ## IRT parameters ##
 ####################
 a.vec <- runif(J, 0.5, 1)
-d.vec <- runif(J, -2, 0)
+d1.vec <- runif(J, -2, 0)
+d2.vec <- NA * d1.vec
 
 ##############
 ## Booklets ##
@@ -85,6 +99,6 @@ booklets <- matrix(0, nrow = 3, ncol = J)
 booklets[1,1:20] <- 1
 booklets[2,21:40] <- 1
 booklets[3,41:60] <- 1
-save( N, p, J, bin.ind, con.ind, ord.ind, con.params.true, bin.params.true, ord.params.true,
-      beta.true, Sigma.true, block1, block2, block3, block4, block5, a.vec, d.vec, booklets,
-      file = './Simulation/simulation_params.RData')
+save( p, J, bin.ind, con.ind, ord.ind, con.params.true, bin.params.true, ord.params.true,
+      beta.true, Sigma.true, block1, block2, block3, block4, block5, a.vec, d1.vec, d2.vec,
+      booklets, file = './Simulation/simulation_params.RData')

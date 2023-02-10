@@ -58,7 +58,7 @@ run <- function(seed, N) {
                         con.params.true, beta.true, a.vec, d1.vec, booklets)
   X <- data$X
   Y <- data$Y
-  
+
   # Estimation of Gaussian copula model
   estimate.res <- GCI.estimate(X,   
                                bin.ind = bin.ind,
@@ -84,24 +84,29 @@ run <- function(seed, N) {
   X.under0 <- estimate.res$X.under
   S <- MVR.knockoffs(Sigma.es)
   
-  latreg.es <- StEM(X, X.under0, NULL, NULL, Y, Sigma.es, NULL, a.vec, d1.vec, d2.vec,
+  latreg.es <- StEM(X, X.under0, NULL, NULL, Y, Sigma.es, NULL, NULL, NULL, NULL, #==Estimate IRT model
                     bin.ind, ord.ind, con.ind, bin.params.es, ord.params.es, con.params.es, 
                     max_iter = 1000, burn_in = 500, is.beta.trace=T,
                     is.print.iter=T, is.knockoff = F)
+  
   beta.es <- latreg.es$beta
   X.under <- latreg.es$X.under
-  theta.interp.es <- latreg.es$interp
-  theta.var.es <- latreg.es$var
   XX <- latreg.es$XX
   XX.ind <- latreg.es$XX.ind
+  
+  theta.interp.es <- latreg.es$interp
+  theta.var.es <- latreg.es$var
+  a.vec.es <- latreg.es$a.vec
+  d1.vec.es <- latreg.es$d1.vec
+  d2.vec.es <- latreg.es$d2.vec
   
   knockoff.stat.record <- NULL
   num.copy <- 31
   # Derandomized knockoff
   for (copy in 1:num.copy) {
-    Gibbs <- X.Gibbs.sample(X, X.under, XX, XX.ind, Y, Omega.es, a.vec, d1.vec, d2.vec,
+    Gibbs <- X.Gibbs.sample(X, X.under, XX, XX.ind, Y, Omega.es, a.vec.es, d1.vec.es, d2.vec.es,
                             beta.es, theta.interp.es, theta.var.es,
-                            bin.ind, ord.ind, con.ind, 
+                            bin.ind, ord.ind, con.ind,
                             bin.params.es, ord.params.es, con.params.es, max_iter = 1000)
     
     # Construct knockoff copy
@@ -115,7 +120,7 @@ run <- function(seed, N) {
     
     # MMLE
     # MMLE of joint latent regression model
-    joint.latreg.es <- StEM(X, X.under, X.knock, X.knock.under, Y, Sigma.es, S, a.vec, d1.vec, d2.vec,
+    joint.latreg.es <- StEM(X, X.under, X.knock, X.knock.under, Y, Sigma.es, S, a.vec.es, d1.vec.es, d2.vec.es,
                             bin.ind, ord.ind, con.ind, bin.params.es, ord.params.es, con.params.es, 
                             eps = 1e-2, max_iter = 1000, burn_in = 500, is.beta.trace=T,
                             is.print.iter=T,  is.knockoff = T)
@@ -136,7 +141,7 @@ run <- function(seed, N) {
     }
     select.res[v,] <- (colMeans(select.v) > 0.5) * 1
   }
-  save(estimate.res, latreg.es, knockoff.stat.record, select.res, file = paste0('./Simulation/Base_result_', N, '_', seed, '.RData'))
+  save(estimate.res, latreg.es, knockoff.stat.record, select.res, file = paste0('./Simulation/Base_EIRT_result_', N, '_', seed, '.RData'))
 }
 
 library(parallel)
@@ -158,3 +163,4 @@ cl <- makeCluster(100)
 registerDoParallel(cl)
 foreach (seed = 1:100, .combine=cbind,  .packages = c('MASS', 'psych','truncnorm', 'Matrix','arstheta')) %dorng% run(seed = seed, N = 4000)
 stopCluster(cl)
+

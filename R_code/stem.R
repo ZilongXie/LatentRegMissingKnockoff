@@ -68,8 +68,8 @@ theta.sample <- function(XX, Y, beta, theta.interp, theta.var, a.vec, d1.vec, d2
 }
 
 
-# Sampling the underlying variables (for both true and knockoffs) and impute the 
-# standardized covariate matrix 
+# Given theta, sample the underlying variables (including or not including knockoffs) 
+# and impute the standardized covariate matrix 
 XX.sample <- function(XX, X, X.under, X.knock.under=NULL, theta, beta, 
                       Omega, XX.ind, bin.params=NULL, ord.params=NULL, 
                       con.params=NULL, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
@@ -110,7 +110,7 @@ XX.sample <- function(XX, X, X.under, X.knock.under=NULL, theta, beta,
   for (j in random) {
     cond.mean <- cbind(X.under, X.knock.under)[, -j] %*% meantrans.mat[, j]
     cond.sd <- sqrt(1/Omega[j, j])
-    jj <- XX.ind[[j]]
+    jj <- XX.ind[[j]]        
     
     # True covariates
     if (j <= p) {
@@ -311,6 +311,77 @@ XX.sample <- function(XX, X, X.under, X.knock.under=NULL, theta, beta,
   return(results)
 }
 
+# Given Y, sample theta and underlying variables (not including knockoffs) 
+# and impute the standardized covariate matrix
+X.Gibbs.sample <- function(X, X.under, XX, XX.ind, Y, Omega, a.vec, d1.vec, d2.vec,
+                           beta, theta.interp, theta.var,
+                           bin.ind=NULL, ord.ind=NULL, con.ind=NULL, bin.params=NULL, 
+                           ord.params=NULL, con.params=NULL, max_iter=1000) {
+  N <- dim(X)[1]
+  p <- dim(X)[2]
+  J <- dim(Y)[2]
+  miss.mask <- is.na(X)
+  
+  if(!is.null(bin.ind)) {
+    # Thresholds for binary variables
+    thresh.bin <- list()
+    thresh.bin$true <- list(lower = matrix(-Inf, nrow = N, ncol = length(bin.ind)),
+                            upper = matrix(Inf, nrow = N, ncol = length(bin.ind)))
+    
+    for (j in 1:length(bin.ind)) {
+      bj <- bin.ind[j]
+      thresh.bin$true$lower[X[,bj] == 1, j] <- bin.params[j]
+      thresh.bin$true$upper[X[,bj] == 0, j] <- bin.params[j]
+    }
+  }
+  
+  ord.max <- NULL
+  if(!is.null(ord.ind)) {
+    ord.max <- apply(X[,ord.ind], 2, max, na.rm = T)
+    thresh.ord <- list()
+    thresh.ord$true <- list(lower = matrix(-Inf, nrow = N, ncol = length(ord.ind)),
+                            upper = matrix(Inf, nrow = N, ncol = length(ord.ind)))
+    
+    for (j in 1:length(ord.ind)) {
+      oj <- ord.ind[j]
+      for (v in 1:(ord.max[j]+1)) {
+        if (v > 1) {
+          thresh.ord$true$lower[which(X[,oj] == v), j] <- ord.params[j, v-1]
+        }
+        if (v < (ord.max[j]+1)) {
+          thresh.ord$true$upper[which(X[,oj] == v), j] <- ord.params[j, v]
+        }
+      }
+    }
+  }
+  
+  meantrans.mat <- matrix(0, nrow = p-1 , ncol = p)
+  for (i in 1:p) {
+    meantrans.mat[, i] <- -Omega[i, -i]/Omega[i, i]
+  }
+  
+  for (iter in 1:max_iter) {
+    # Sampling theta
+    theta <- theta.sample(XX, Y, beta, theta.interp, theta.var, a.vec, d1.vec, d2.vec)
+    
+    # Sampling X.under, X.knock.under and XX
+    res.sample <- XX.sample(XX, X, X.under, NULL, theta, beta, Omega,
+                            XX.ind, bin.params, ord.params, con.params, bin.ind,
+                            ord.ind, con.ind, thresh.bin, thresh.ord, is.knockoff=F,
+                            miss.mask = miss.mask, meantrans.mat = meantrans.mat,
+                            ord.max = ord.max)
+    
+    X.under <- res.sample$X.under
+    XX <- res.sample$XX
+  }
+  
+  result <- list()
+  result$X.under.Gibbs <- X.under
+  result$XX.Gibbs <- XX
+  
+  return(result)
+}
+
 # Initialize underlying variables
 X.under.init <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
                          thresh.bin=NULL, thresh.ord=NULL, con.params=NULL) {
@@ -353,7 +424,8 @@ X.under.init <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
 }
 
 # Stochastic EM algorithm
-StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=NULL, a.vec, d1.vec, d2.vec,
+StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=NULL, 
+                 a.vec=NULL, d1.vec=NULL, d2.vec=NULL,
                  bin.ind=NULL, ord.ind=NULL, con.ind=NULL, bin.params=NULL, 
                  ord.params=NULL, con.params=NULL, eps=1e-2, max_iter=1000, 
                  burn_in=500, is.beta.trace=F, is.print.iter=F, 
@@ -363,6 +435,11 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
   J <- dim(Y)[2]
   miss.mask <- is.na(X)
   args <- list(...)
+  
+  is.estimateIRT <- F
+  if (any(c(is.null(a.vec), is.null(d1.vec), is.null(d2.vec)))) {
+    is.estimateIRT <- T
+  }
   
   if (is.knockoff) {
     pp <- 2*p
@@ -395,21 +472,43 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
   if (!is.null(args$theta0)) {
     theta0 <- args$theta0
   } else {
-    # Use mirt to estimate initial values of theta
-    if (length(poly.ind) > 0) {
-      # TODO: Extend to polytomous items with more than 3 categories
-      Y.model<- mirt::mirt(as.data.frame(Y), 1, itemtype= 'gpcm', SE = F, pars = 'values')
-      Y.model$value[Y.model$name == 'a1'] <- a.vec
-      Y.model$value[Y.model$name == 'd1'] <- d1.vec
-      Y.model$value[Y.model$name == 'd2'] <- (d1.vec + d2.vec)[which(!is.na(d2.vec))]
-      Y.model$est <- FALSE
-      theta0 <- mirt::fscores(mirt::mirt(as.data.frame(Y), 1, itemtype= 'gpcm', pars=Y.model), rotate = F)  
-    } else {
-      Y.model <- mirt::mirt(as.data.frame(Y), 1, itemtype= '2PL', SE = F, pars = 'values')
-      Y.model$value[Y.model$name == 'a1'] <- a.vec
-      Y.model$value[Y.model$name == 'd1'] <- d1.vec
-      Y.model$est<-FALSE
-      theta0 <- mirt::fscores(mirt::mirt(as.data.frame(Y), 1, pars=Y.model), rotate = F)
+    if (!is.estimateIRT) {
+      # Use mirt to estimate initial values of theta. Do not estimate IRT parameters.
+      if (length(poly.ind) > 0) {
+        # TODO: Extend to polytomous items with more than 3 categories
+        Y.model<- mirt::mirt(as.data.frame(Y), 1, itemtype= 'gpcm', SE = F, pars = 'values')
+        Y.model$value[Y.model$name == 'a1'] <- a.vec
+        Y.model$value[Y.model$name == 'd1'] <- d1.vec
+        Y.model$value[Y.model$name == 'd2'] <- (d1.vec + d2.vec)[which(!is.na(d2.vec))]
+        Y.model$est <- FALSE
+        theta0 <- mirt::fscores(mirt::mirt(as.data.frame(Y), 1, itemtype= 'gpcm', pars=Y.model), rotate = F)
+        
+      } else {
+        Y.model <- mirt::mirt(as.data.frame(Y), 1, itemtype= '2PL', SE = F, pars = 'values')
+        Y.model$value[Y.model$name == 'a1'] <- a.vec
+        Y.model$value[Y.model$name == 'd'] <- d1.vec
+        Y.model$est<-FALSE
+        theta0 <- mirt::fscores(mirt::mirt(as.data.frame(Y), 1, pars=Y.model), rotate = F)
+      }
+    } else{
+      # Use mirt to estimate initial values of theta and item parameters.
+      if (length(poly.ind) > 0) {
+        # TODO: Extend to polytomous items with more than 3 categories
+        Y.model <- mirt::mirt(as.data.frame(Y), 1, itemtype= 'gpcm', SE = F)
+        IRTparams <- as.data.frame(mirt::coef(Y.model, simplify = TRUE)$items)
+        a.vec <- IRTparams$a1
+        d1.vec <- IRTparams$d1
+        d2.vec <- IRTparams$d2
+        theta0 <- mirt::fscores(Y.model, rotate = F)
+        
+      } else {
+        Y.model <- mirt::mirt(as.data.frame(Y), 1, itemtype= '2PL', SE = F)
+        IRTparams <- as.data.frame(mirt::coef(Y.model, simplify = TRUE)$items)
+        a.vec <- IRTparams$a1
+        d1.vec <- IRTparams$d
+        d2.vec <- rep(NA, length(d1.vec))
+        theta0 <- mirt::fscores(Y.model, rotate = F)
+      }
     }
   }
   
@@ -528,26 +627,24 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
   
   # Initialize theta and parameters
   theta <- c(theta0)
-  lm.model <- lm(theta ~ ., data = as.data.frame(cbind(theta, XX)))
-  coeff <- coef(lm.model)
-  
-  if (!is.null(args$beta0)) {
+  if (all(c(!is.null(args$beta0), !is.null(args$theta.interp0), !is.null(args$theta.var0)))) {
     beta0 <- args$beta0
-  } else {
-    beta0 <- coeff[-1]
-  }
-  
-  if (!is.null(args$theta.interp0)) {
     theta.interp0 <- args$theta.interp0
-  } else {
-    theta.interp0 <- coeff[1]
-  }
-  
-  if (!is.null(args$theta.var0)) {
     theta.var0 <- args$theta.var0
   } else {
-    theta.var0 <- mean(lm.model$residuals^2)
-  }
+    if (!is.estimateIRT) {
+      lm.model <- lm(theta ~ ., data = as.data.frame(cbind(theta, XX)))
+      coeff <- coef(lm.model)
+      beta0 <- coeff[-1]
+      theta.interp0 <- coeff[1]
+      theta.var0 <- mean(lm.model$residuals^2)
+    } else {
+      lm.model <- lm(paste0('theta ~ 0 + ', paste0(XX.names, collapse = '+')), as.data.frame(cbind(theta, XX)))
+      beta0 <- coef(lm.model)
+      theta.interp0 <- 0
+      theta.var0 <- 1
+    }
+  }  
   
   beta <- beta0
   theta.interp <- theta.interp0
@@ -560,6 +657,9 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
   }
   theta.interp.avg <- 0
   theta.var.avg <- 0
+  a.vec.avg <- 0
+  d1.vec.avg <- 0
+  d2.vec.avg <- 0
   
   # There are 2*p columns if there is knockoff copy
   meantrans.mat <- matrix(0, nrow = pp-1 , ncol = pp)
@@ -576,7 +676,7 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
     #===============#
     # Sampling Step #
     #===============#
-    # Sampling theta
+    # Sampling theta    
     theta <- theta.sample(XX, Y, beta, theta.interp, theta.var, a.vec, d1.vec, d2.vec)
     
     # Sampling X.under, X.knock.under and XX
@@ -595,12 +695,30 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
     #===================#
     # Maximization Step #
     #===================#
-    # Optimization by simple linear regression
-    lm.model <- lm(theta ~ ., data = as.data.frame(cbind(theta, XX)))
-    coeffs <- coef(lm.model)
-    beta <- coeffs[-1]
-    theta.interp <- coeffs[1]
-    theta.var <- mean(lm.model$residuals^2)
+    if (!is.estimateIRT) {
+      # Optimization by simple linear regression
+      lm.model <- lm(theta ~ ., data = as.data.frame(cbind(theta, XX)))
+      coeffs <- coef(lm.model)
+      beta <- coeffs[-1]
+      theta.interp <- coeffs[1]
+      theta.var <- mean(lm.model$residuals^2)
+    }
+    
+    if (is.estimateIRT) {
+      lm.model <- lm(paste0('theta ~ 0 + ', paste0(XX.names, collapse = '+')), as.data.frame(cbind(theta, XX)))
+      beta <- coef(lm.model)
+      for (j in dich.ind) {
+        glm.model <- glm(Y[,j] ~ theta, family = 'binomial')
+        coeffs <- coef(glm.model)
+        d1.vec[j] <- coeffs[1]
+        a.vec[j] <- coeffs[2]
+      }
+      
+      #TODO: add update formula for polytomous items
+      # for (j in dich.ind) {
+      # 
+      # }
+    }
     
     if (is.beta.trace) {
       beta.record <- cbind(beta.record, beta)
@@ -608,8 +726,22 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
     
     if(iter > burn_in) {
       beta.avg <- ((iter-burn_in-1)*beta.avg + beta)/(iter-burn_in)
-      theta.interp.avg <- ((iter-burn_in-1)*theta.interp.avg + theta.interp)/(iter-burn_in)
-      theta.var.avg <- ((iter-burn_in-1)*theta.var.avg + theta.var)/(iter-burn_in)
+      
+      if (!is.estimateIRT) {
+        theta.interp.avg <- ((iter-burn_in-1)*theta.interp.avg + theta.interp)/(iter-burn_in)
+        theta.var.avg <- ((iter-burn_in-1)*theta.var.avg + theta.var)/(iter-burn_in)
+        a.vec.avg <- a.vec
+        d1.vec.avg <- d1.vec
+        d2.vec.avg <- d2.vec
+      }
+      
+      if (is.estimateIRT) {
+        theta.interp.avg <- 0
+        theta.var.avg <- 1
+        a.vec.avg <- ((iter-burn_in-1)*a.vec.avg + a.vec)/(iter-burn_in)
+        d1.vec.avg <- ((iter-burn_in-1)*d1.vec.avg + d1.vec)/(iter-burn_in)
+        d2.vec.avg <- ((iter-burn_in-1)*d2.vec.avg + d2.vec)/(iter-burn_in)
+      }
     }
     
     # TODO: Add stopping criterion
@@ -620,84 +752,17 @@ StEM <- function(X, X.under=NULL, X.knock=NULL, X.knock.under=NULL, Y, Sigma, S=
   result$iter <- iter
   setNames(beta.avg, names(XX))
   result$beta <- beta.avg
-  result$theta <- theta
   result$interp <- theta.interp.avg
   result$var <- theta.var.avg
+  result$a.vec <- a.vec.avg
+  result$d1.vec <- d1.vec.avg
+  result$d2.vec <- d2.vec.avg
   result$XX <- XX
   result$XX.ind <- XX.ind
   result$X.under <- X.under
   if (is.beta.trace) {
     result$beta.record <- beta.record
   }
-  
-  return(result)
-}
-
-X.Gibbs.sample <- function(X, X.under, XX, XX.ind, Y, Omega, a.vec, d1.vec, d2.vec,
-                           beta, theta.interp, theta.var,
-                           bin.ind=NULL, ord.ind=NULL, con.ind=NULL, bin.params=NULL, 
-                           ord.params=NULL, con.params=NULL, max_iter=1000) {
-  N <- dim(X)[1]
-  p <- dim(X)[2]
-  J <- dim(Y)[2]
-  miss.mask <- is.na(X)
-  
-  if(!is.null(bin.ind)) {
-    # Thresholds for binary variables
-    thresh.bin <- list()
-    thresh.bin$true <- list(lower = matrix(-Inf, nrow = N, ncol = length(bin.ind)),
-                            upper = matrix(Inf, nrow = N, ncol = length(bin.ind)))
-    
-    for (j in 1:length(bin.ind)) {
-      bj <- bin.ind[j]
-      thresh.bin$true$lower[X[,bj] == 1, j] <- bin.params[j]
-      thresh.bin$true$upper[X[,bj] == 0, j] <- bin.params[j]
-    }
-  }
-  
-  ord.max <- NULL
-  if(!is.null(ord.ind)) {
-    ord.max <- apply(X[,ord.ind], 2, max, na.rm = T)
-    thresh.ord <- list()
-    thresh.ord$true <- list(lower = matrix(-Inf, nrow = N, ncol = length(ord.ind)),
-                            upper = matrix(Inf, nrow = N, ncol = length(ord.ind)))
-    
-    for (j in 1:length(ord.ind)) {
-      oj <- ord.ind[j]
-      for (v in 1:(ord.max[j]+1)) {
-        if (v > 1) {
-          thresh.ord$true$lower[which(X[,oj] == v), j] <- ord.params[j, v-1]
-        }
-        if (v < (ord.max[j]+1)) {
-          thresh.ord$true$upper[which(X[,oj] == v), j] <- ord.params[j, v]
-        }
-      }
-    }
-  }
-  
-  meantrans.mat <- matrix(0, nrow = p-1 , ncol = p)
-  for (i in 1:p) {
-    meantrans.mat[, i] <- -Omega[i, -i]/Omega[i, i]
-  }
-  
-  for (iter in 1:max_iter) {
-    # Sampling theta
-    theta <- theta.sample(XX, Y, beta, theta.interp, theta.var, a.vec, d1.vec, d2.vec)
-    
-    # Sampling X.under, X.knock.under and XX
-    res.sample <- XX.sample(XX, X, X.under, NULL, theta, beta, Omega,
-                            XX.ind, bin.params, ord.params, con.params, bin.ind,
-                            ord.ind, con.ind, thresh.bin, thresh.ord, is.knockoff=F,
-                            miss.mask = miss.mask, meantrans.mat = meantrans.mat,
-                            ord.max = ord.max)
-    
-    X.under <- res.sample$X.under
-    XX <- res.sample$XX
-  }
-  
-  result <- list()
-  result$X.under.Gibbs <- X.under
-  result$XX.Gibbs <- XX
   
   return(result)
 }

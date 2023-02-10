@@ -1,4 +1,10 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
+
+################################################################################
 source('./R_code/knockoff_select.R')
+
 ###############
 # Single copy #
 ###############
