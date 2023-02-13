@@ -133,12 +133,45 @@ run <- function(seed, N) {
   theta.Gibbs <- Gibbs$theta.Gibbs
   
   # Stepwise AIC/BIC selection on imputed data
-  AIC.impute <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'AIC')
-  BIC.impute <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'BIC')
+  AIC.impute.true <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'AIC')
+  BIC.impute.true <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'BIC')
   
-  save(AIC.complete, BIC.complete, AIC.impute, BIC.impute,
+  
+  # Gibbs sampling from estimated model
+  load(paste0('Knockoff_Simulation/final_derand_V2_', N, '_', seed, '.RData'))
+  
+  con.params.es <- list()
+  con.params.es$mean <- estimate.res$params.avg$con.params.mean
+  con.params.es$sd <- estimate.res$params.avg$con.params.sd
+  bin.params.es <- estimate.res$params.avg$bin.params
+  ord.params.es <- estimate.res$params.avg$ord.params
+  Omega.es <- solve(estimate.res$params.avg$Sigma)    
+  beta.es <- latreg.es$beta
+  theta.interp.es <- latreg.es$interp
+  theta.var.es <- latreg.es$var
+  X.under.es <- latreg.es$X.under
+  XX.es <- latreg.es$XX
+  XX.ind <- latreg.es$XX.ind
+  
+  Gibbs <- X.Gibbs.sample(X, X.under.es, XX.es, XX.ind, Y, Omega.es,
+                          a.vec, d1.vec, d2.vec,
+                          beta.es, theta.interp.es, theta.var.es,
+                          bin.ind, ord.ind, con.ind, 
+                          bin.params.es, ord.params.es, con.params.es, 
+                          max_iter = 1000)
+  
+  X.Gibbs <- Gibbs$XX.Gibbs
+  theta.Gibbs <- Gibbs$theta.Gibbs
+  
+  # Stepwise AIC/BIC selection on imputed data
+  AIC.impute.es <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'AIC')
+  BIC.impute.es <- auto.stepwise.selection(X = X.Gibbs, theta = theta.Gibbs, criterion = 'BIC')
+  
+  
+  save(AIC.complete, BIC.complete, AIC.impute.true, BIC.impute.true, AIC.impute.es, BIC.impute.es,
        file = paste0('./Simulation/Base_AICBIC_result_', N, '_', seed, '.RData'))
 }
+
 
 library(parallel)
 library(foreach)
