@@ -5,10 +5,11 @@ rowmax <- function(x) {
 
 # Use the estimated parameters to obtain scales of the standarized covariates
 params.to.scale <- function(bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
-                            bin.params=NULL, ord.params=NULL, con.params=NULL) {
+                            bin.params=NULL, ord.params=NULL, con.params=NULL,
+                            mea.ind=NULL) {
   
   p <- length(bin.ind) + length(ord.ind) + length(con.ind)
-  if (p == 0) {
+  if ((p + length(mea.ind)) == 0) {
     stop('The input indices are null!', call. = F)
   }
   
@@ -50,10 +51,12 @@ params.to.scale <- function(bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
     }
   }
   
+  est.scale <- c(est.scale, rep(1, length(mea.ind)))
   return(est.scale)
 }
 
-knockoff.stat <- function(beta, est.scale, bin.ind=NULL, ord.ind=NULL, con.ind=NULL) {
+knockoff.stat <- function(beta, est.scale, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
+                          mea.ind=NULL) {
   pp <- length(beta)
   beta.true <- beta[1:(pp/2)]
   beta.knock <- beta[-(1:(pp/2))]
@@ -65,11 +68,11 @@ knockoff.stat <- function(beta, est.scale, bin.ind=NULL, ord.ind=NULL, con.ind=N
   }
   
   if (length(ord.ind) > 0) {
-    if (length(bin.ind) + length(con.ind) == 0) {
+    if ((length(bin.ind) + length(con.ind) + length(mea.ind)) == 0) {
       stop('There exist ordinal variables. Indices are needed.', call. = F)
     }
     
-    p <- length(bin.ind) + length(con.ind) + length(ord.ind)
+    p <- length(bin.ind) + length(con.ind) + length(ord.ind) + length(mea.ind)
     w.vec <- c()
     len.temp <- 0
     for (j in 1:p) {

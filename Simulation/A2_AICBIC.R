@@ -2,11 +2,13 @@
 # https://github.com/ZilongXie/LatentRegMissingKnockoff
 setwd('') 
 
-################################################################################
-source('Knockoff_Simulation/gci_estimate.R')
-source('Knockoff_Simulation/knockoff_construct.R')
-source('Knockoff_Simulation/knockoff_select.R')
-source('Knockoff_Simulation/stem.R')
+#############
+# Functions #
+#############
+source('./R_code/gci_estimate.R')
+source('./R_code/knockoff_construct.R')
+source('./R_code/knockoff_select.R')
+source('./R_code/stem.R')
 
 expit <- function(x) {1/(1+exp(-x))}
 
@@ -29,10 +31,9 @@ data.generate <- function(N, p, J, Sigma.true, bin.ind, con.ind, bin.params.true
   Y <- matrix(rbinom(n = prod(dim(Y.prob)), size = 1, prob = Y.prob),
               nrow = dim(Y.prob)[1], ncol = dim(Y.prob)[2])
   
+  # SMAR condition
   miss.prob <- matrix(0, nrow = N, ncol = p)
   true.ind <- which(beta.true != 0)
-  
-  # Missing at random
   groups <- sample(1:5, N, replace = T)
   for (i in 1:5) {
     rows <- which(groups == i)
@@ -99,7 +100,7 @@ auto.stepwise.selection <- function(X, theta, criterion = 'AIC') {
 }
 
 run <- function(seed, N) {
-  set.seed(seed)
+  set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind='default')
   load('./Simulation/simulation_params.RData')
   
   data <- data.generate(N, p, J, Sigma.true, bin.ind, con.ind, bin.params.true,
@@ -121,13 +122,13 @@ run <- function(seed, N) {
   XX <- X.complete  
   XX.ind <- list()
   for (j in 1:p) {XX.ind[[j]] <- j}
-  
-  Gibbs <- X.Gibbs.sample(X, X.under, XX, XX.ind, Y, Omega.true, 
-                          a.vec, d1.vec, d2.vec,
-                          beta.true, theta.interp.true, theta.var.true,
-                          bin.ind, ord.ind, con.ind, 
-                          bin.params.true, ord.params.true, con.params.true, 
-                          max_iter = 1000)
+  Gibbs <- X.Gibbs.sample(X=X, X.under=X.under, XX=XX, XX.ind=XX.ind, Y=Y, Omega=Omega.true,
+                          a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec, 
+                          beta=beta.true, theta.interp=theta.interp.true, theta.var=theta.var.true,
+                          bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
+                          bin.params=bin.params.true, ord.params=ord.params.true, 
+                          con.params=con.params.true, 
+                          max_iter=1000)
   
   X.Gibbs <- Gibbs$XX.Gibbs
   theta.Gibbs <- Gibbs$theta.Gibbs
@@ -138,7 +139,7 @@ run <- function(seed, N) {
   
   
   # Gibbs sampling from estimated model
-  load(paste0('Knockoff_Simulation/final_derand_V2_', N, '_', seed, '.RData'))
+  load(paste0('./Simulation/Base_result_', N, '_', seed, '.RData'))
   
   con.params.es <- list()
   con.params.es$mean <- estimate.res$params.avg$con.params.mean
@@ -153,12 +154,13 @@ run <- function(seed, N) {
   XX.es <- latreg.es$XX
   XX.ind <- latreg.es$XX.ind
   
-  Gibbs <- X.Gibbs.sample(X, X.under.es, XX.es, XX.ind, Y, Omega.es,
-                          a.vec, d1.vec, d2.vec,
-                          beta.es, theta.interp.es, theta.var.es,
-                          bin.ind, ord.ind, con.ind, 
-                          bin.params.es, ord.params.es, con.params.es, 
-                          max_iter = 1000)
+  Gibbs <- X.Gibbs.sample(X=X, X.under=X.under.es, XX=XX.es, XX.ind=XX.ind, Y=Y, Omega=Omega.es,
+                          a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec, 
+                          beta=beta.es, theta.interp=theta.interp.es, theta.var=theta.var.es,
+                          bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
+                          bin.params=bin.params.es, ord.params=ord.params.es, 
+                          con.params=con.params.es, 
+                          max_iter=1000)
   
   X.Gibbs <- Gibbs$XX.Gibbs
   theta.Gibbs <- Gibbs$theta.Gibbs
@@ -172,7 +174,9 @@ run <- function(seed, N) {
        file = paste0('./Simulation/Base_AICBIC_result_', N, '_', seed, '.RData'))
 }
 
-
+#######################
+# Parallel simulation #
+#######################
 library(parallel)
 library(foreach)
 library(doParallel)
@@ -192,3 +196,28 @@ cl <- makeCluster(100)
 registerDoParallel(cl)
 foreach (seed = 1:100, .combine=cbind,  .packages = c('MASS', 'psych','truncnorm', 'Matrix','arstheta')) %dorng% run(seed = seed, N = 4000)
 stopCluster(cl)
+
+###########
+# Results #
+###########
+N = 1000 # Modify N here, N = 1000, 2000, 4000
+load('./Simulation/simulation_params.RData')
+AIC.select <- NULL
+BIC.select <- NULL
+for (seed in 1:100) {  
+  load(paste0('./Simulation/Base_AICBIC_result_', N, '_', seed, '.RData'))
+  temp <- rep(0, 100)
+  temp[AIC.impute.es$var.set] <- 1
+  AIC.select <- rbind(AIC.select, temp)
+  temp <- rep(0, 100)
+  temp[BIC.impute.es$var.set] <- 1
+  BIC.select <- rbind(BIC.select, temp)
+}
+
+# PFER
+mean(rowSums(t(t(AIC.select == 1) * (beta.true == 0))))
+mean(rowSums(t(t(BIC.select == 1) * (beta.true == 0))))
+
+# TPR
+mean(rowSums(t(t(AIC.select == 1) * (beta.true != 0))))
+mean(rowSums(t(t(BIC.select == 1) * (beta.true != 0))))

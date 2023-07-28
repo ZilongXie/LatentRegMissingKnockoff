@@ -1,3 +1,6 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('D:/!Working Paper!/Knockoff+Latent/@Github')
 load('./Real_data/2015_USA_STU.RData')
 load('./Real_data/2015_USA_COG.RData')
 
@@ -230,6 +233,74 @@ X <- X[dropped,]
 ######################
 X[which(X[,'OUTHOURS'] == 0), 'OUTHOURS'] = NA
 X[,'OUTHOURS'] <- log(X[,'OUTHOURS'])
+
+#####################
+# Rename predictors #
+#####################
+names(X) <- c(
+  'GENDER',
+  'LANGAH',
+  'EISCED',
+  'SKIDAY',
+  'SKICAL',
+  'ARRLAT',
+  'DAYPEC',
+  'DAYMPA',
+  'CHOCOU',
+  'CHODIF',
+  'CHONUM',
+  'GRADE',
+  'DISCLI',
+  'TEASUP',
+  'EBSCIT',
+  'TDSCIT',
+  'ENVAWA',
+  'ENVOPT',
+  'JOYSCI',
+  'INTBRS',
+  'INSTSC',
+  'SCIEEF',
+  'EPIST',
+  'SCIACT',
+  'EISEIO',
+  'MISCED',
+  'FISCED',
+  'MISEIO',
+  'FISEIO',
+  'REPEAT',
+  'DUECEC',
+  'OUTHOU',
+  'TMINS',
+  'BELONG',
+  'ANXTES',
+  'MOTIVA',
+  'COOPER',
+  'CPSVAL',
+  'EMOSUP',
+  'PERFEE',
+  'ADINST',
+  'UNFAIR',
+  'CULTPO',
+  'HEDRES',
+  'WEALTH',
+  'SCI.PHY',
+  'SCI.CHE',
+  'SCI.BIO',
+  'SCI.EAR',
+  'SCI.APP',
+  'SCI.GEN',
+  'OUT.MEA',
+  'OUT.STU',
+  'OUT.VED',
+  'OUT.REA',
+  'OUT.NET',
+  'OUT.GAM',
+  'OUT.FRI',
+  'OUT.PAR',
+  'OUT.HOL',
+  'OUT.JOB',
+  'OUT.SPO'
+)
 
 #################
 # Creat indices #

@@ -1,3 +1,6 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
 load('./Real_data/Real_data_estimate.RData')
 
 # Extended indices

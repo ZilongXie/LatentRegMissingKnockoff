@@ -35,7 +35,7 @@ ThetaLogPost::ThetaLogPost(NumericVector Y, NumericVector avec, NumericVector d1
   Y(Y), avec(avec), d1vec(d1vec), d2vec(d2vec), mu(mu), var(var) {}
 
 NumericVector ThetaLogPost::h(NumericVector theta) {
-  // Compute the logdensity, taking vector as input
+  // Compute the logdensity, taking vector as input, return vector
   NumericVector rv = - 0.5*pow((theta-mu), 2)/var;
   for (int i = 0; i < Y.size(); ++i) {
     if (!NumericVector::is_na(Y.at(i))) {
@@ -57,7 +57,7 @@ NumericVector ThetaLogPost::h(NumericVector theta) {
 }
 
 NumericVector ThetaLogPost::h_prime(NumericVector theta) {
-  // Compute the detivative of logdensity, taking vector as input
+  // Compute the detivative of logdensity, taking vector as input, return vector
   NumericVector rv = - (theta - mu)/var;
   for (int i = 0; i < Y.size(); ++i) {
     if (!NumericVector::is_na(Y.at(i))) {
@@ -65,7 +65,9 @@ NumericVector ThetaLogPost::h_prime(NumericVector theta) {
         rv += Y.at(i)*avec.at(i) - avec.at(i)/(1+exp(-(avec.at(i)*theta+d1vec.at(i))));
       }
       if (!NumericVector::is_na(d2vec.at(i))) {
-        rv += Y.at(i)*avec.at(i) - avec.at(i)*(1-1/(1 + exp(avec.at(i)*theta+d1vec.at(i)) + exp(2*avec.at(i)*theta+d1vec.at(i)+d2vec.at(i))));
+        rv += Y.at(i)*avec.at(i) - avec.at(i)*(
+          (exp(avec.at(i)*theta+d1vec.at(i)) + 2*exp(2*avec.at(i)*theta+d1vec.at(i)+d2vec.at(i)))
+        /(1 + exp(avec.at(i)*theta+d1vec.at(i)) + exp(2*avec.at(i)*theta+d1vec.at(i)+d2vec.at(i))));
       }
     }
   }

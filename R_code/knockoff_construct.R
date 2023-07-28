@@ -1,7 +1,7 @@
 # Check if positive definite
 is.posdef <- function(X){min(eigen(x = X, symmetric = T, only.values = T)$value) > 0}
 
-# Imputed mixed data
+# Impute mixed data
 Impute <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                    bin.params=NULL, ord.params=NULL, con.params=NULL) {
   
@@ -23,7 +23,7 @@ Impute <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                                            > outer(rep(1, sum(miss.mask.j)), ord.params[loc,]))
     }
   }
-   
+  
   #Impute continuous variables
   if(!is.null(con.ind)) {
     X.impute[,con.ind] <- t(t(X.under[,con.ind]) * c(con.params$sd) + c(con.params$mean))
@@ -66,7 +66,8 @@ MVR.knockoffs <- function(Sigma, max_iter = 1000){
 
 # Construct knockoff copy
 Knockoffs.construct <- function(X.under, Omega, S, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
-                                bin.params=NULL, ord.params=NULL, con.params=NULL) {
+                                bin.params=NULL, ord.params=NULL, con.params=NULL,
+                                mea.ind=NULL, mea.params=NULL) {
   
   N <- dim(X.under)[1]
   p <- dim(X.under)[2]
@@ -83,10 +84,30 @@ Knockoffs.construct <- function(X.under, Omega, S, bin.ind=NULL, ord.ind=NULL, c
   # Generate knockoff copy of underlying variables
   X.knocks.under <- cond.mu + MASS::mvrnorm(n = N, mu = rep(0, p), Sigma = cond.cov)
   
-  # Generate knockoff copy of true covariates
-  X.knocks.impute <- Impute(X.knocks.under * NA, X.knocks.under, bin.ind, ord.ind, con.ind, 
-                            bin.params, ord.params, con.params)
+  # Generate knockoff copy of true covariates and indicators
+  W.list.knock <- NULL
+  if ((length(mea.ind) > 0) & !is.null(mea.params)) {
+    X.mea.knock <- X.knocks.under[,mea.ind]
+    W.list.knock <- list()
+    for (l in 1:length(mea.ind)) {
+      W.knock <- (outer(X.mea.knock[,l], mea.params$loadings[[l]]) + 
+                    outer(rep(1, N), mea.params$mean[[l]]) +
+                    matrix(rnorm(N * length(mea.params$loadings[[l]])), nrow = N) *
+                    outer(rep(1, N), sqrt(mea.params$errvar[[l]]))
+                  )
+      W.list.knock[[l]] <- W.knock
+    }
+    
+    X.knocks.impute <- Impute(X=X.knocks.under[,-mea.ind] * NA, X.under=X.knocks.under[,-mea.ind],
+                              bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, bin.params=bin.params, 
+                              ord.params=ord.params, con.params=con.params)
+  } else {
+    X.knocks.impute <- Impute(X=X.knocks.under * NA, X.under=X.knocks.under,
+                              bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, bin.params=bin.params, 
+                              ord.params=ord.params, con.params=con.params)
+  }
   
   return(list(X.knocks.under = X.knocks.under,
-              X.knocks.impute = X.knocks.impute))
+              X.knocks.impute = X.knocks.impute,
+              W.list.knock = W.list.knock))
 }

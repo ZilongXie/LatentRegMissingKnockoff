@@ -1,5 +1,15 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
+
+source('./R_code/gci_estimate.R')
+source('./R_code/knockoff_construct.R')
+source('./R_code/knockoff_select.R')
+source('./R_code/stem.R')
+
 bootstrap <- function(seed) {
-  set.seed(seed)
+  set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind='default')
+  
   X <- read.csv('./Real_data/USA_X.csv')
   Y <- read.csv('./Real_data/USA_Y.csv')
   load('./Real_data/Item_parameters_2015.RData')
@@ -9,12 +19,12 @@ bootstrap <- function(seed) {
   ind <- sample(1:N, size = N, replace = T)
   X.resample <- X[ind, ]
   Y.resample <- Y[ind, ]
-  gci.resampled <- GCI.estimate(X.resample,
-                                bin.ind,
-                                ord.ind,
-                                con.ind,
-                                max.iter = 1000,
-                                burn.in = 500,
+  gci.resampled <- GCI.estimate(X=X.resample,
+                                bin.ind=bin.ind,
+                                ord.ind=ord.ind,
+                                con.ind=con.ind,
+                                max.iter = 2000,
+                                burn.in = 1000,
                                 print.iter = T,
                                 is.params.trace = T,
                                 is.return.under = T,
@@ -28,22 +38,20 @@ bootstrap <- function(seed) {
   ord.params.resampled <- gci.resampled$params.avg$ord.params
   Sigma.resampled <- gci.resampled$params.avg$Sigma
   
-  latreg.resampled <- StEM(X.resample, X.under.resampled, NULL, NULL, Y.resample, Sigma.resampled, NULL,
-                           a.vec, d1.vec, d2.vec, 
-                           bin.ind, ord.ind, con.ind, 
-                           bin.params.resampled, ord.params.resampled, con.params.resampled, 
-                           max_iter=1000, burn_in=500, is.beta.trace=T, is.print.iter=T,
-                           beta0 = beta.es, theta.interp0 = theta.interp.es,
-                           theta.var0 = theta.var.es, theta0 = latreg.es$theta)
+  latreg.resampled <- StEM(X=X.resample, X.under=X.under.resampled, X.knock=NULL, X.knock.under=NULL, 
+                           Y=Y.resample, Sigma=Sigma.resampled, S=NULL, 
+                           a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec, 
+                           bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
+                           bin.params=bin.params.resampled, ord.params=ord.params.resampled, con.params=con.params.resampled, 
+                           max_iter=1000, burn_in=500, is.beta.trace=T, is.print.iter=T, is.knockoff=F,
+                           theta.interp0 = theta.interp.es, theta.var0 = theta.var.es, theta0 = latreg.es$theta,
+                           lambda=0)
   
   beta.resampled <- latreg.resampled$beta
-  save(beta.resampled, con.params.resampled, file = paste0('./Real_data/bootstrap_', seed, '.RData'))
+  save(gci.resampled, latreg.resampled,
+       beta.resampled, con.params.resampled, 
+       file = paste0('./Real_data/bootstrap_', seed, '.RData'))
 }
-
-source('./R_code/gci_estimate.R')
-source('./R_code/stem.R')
-source('./R_code/knockoff_construct.R')
-source('./R_code/knockoff_select.R')
 
 # Parallelization
 library(parallel)

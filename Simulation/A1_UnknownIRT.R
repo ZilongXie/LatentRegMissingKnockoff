@@ -30,6 +30,8 @@ data.generate <- function(N, p, J, Sigma.true, bin.ind, con.ind, bin.params.true
   Y <- matrix(rbinom(n = prod(dim(Y.prob)), size = 1, prob = Y.prob),
               nrow = dim(Y.prob)[1], ncol = dim(Y.prob)[2])
   
+  hist(Y.prob[,1])
+  
   # SMAR condition
   miss.prob <- matrix(0, nrow = N, ncol = p)
   true.ind <- which(beta.true != 0)
@@ -55,15 +57,13 @@ run <- function(seed, N) {
   set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind='default')
   load('./Simulation/simulation_params.RData')
   
-  data <- data.generate(N=N, p=p, J=J, Sigma.true=Sigma.true, bin.ind=bin.ind, 
-                        con.ind=con.ind, bin.params.true=bin.params.true,
-                        con.params.true=con.params.true, beta.true=beta.true, 
-                        a.vec=a.vec, d.vec=d1.vec, booklets=booklets)
+  data <- data.generate(N, p, J, Sigma.true, bin.ind, con.ind, bin.params.true,
+                        con.params.true, beta.true, a.vec, d1.vec, booklets)
   X <- data$X
   Y <- data$Y
   
   # Estimation of Gaussian copula model
-  estimate.res <- GCI.estimate(X = X,
+  estimate.res <- GCI.estimate(X = X,   
                                bin.ind = bin.ind,
                                ord.ind = ord.ind,
                                con.ind = con.ind,
@@ -87,34 +87,32 @@ run <- function(seed, N) {
   X.under0 <- estimate.res$X.under
   S <- MVR.knockoffs(Sigma.es)
   
-  hist(estimate.res$params.avg$Sigma - Sigma.true)
-  svd(Sigma.es)$d
-  svd(Sigma.true)$d
-  svd(rbind(cbind(Sigma.es, Sigma.es - S), cbind(Sigma.es - S, Sigma.es)))$d
-  
-  
-  # Estimation of latent regression IRT model
   latreg.es <- StEM(X=X, X.under=X.under0, X.knock=NULL, X.knock.under=NULL, 
                     Y=Y, Sigma=Sigma.es, S=NULL,  
-                    a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec,
+                    a.vec=NULL, d1.vec=NULL, d2.vec=NULL, #==Estimate IRT model
                     bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
                     bin.params=bin.params.es, ord.params=ord.params.es, 
                     con.params=con.params.es, max_iter=1000, burn_in=500, 
-                    is.beta.trace=F, is.print.iter=T, is.knockoff=F)
+                    is.beta.trace=F, is.print.iter=T, is.knockoff=F, 
+                    lambda = 1/sqrt(N))
   
   beta.es <- latreg.es$beta
   X.under <- latreg.es$X.under
-  theta.interp.es <- latreg.es$interp
-  theta.var.es <- latreg.es$var
   XX <- latreg.es$XX
   XX.ind <- latreg.es$XX.ind
+  
+  theta.interp.es <- latreg.es$interp
+  theta.var.es <- latreg.es$var
+  a.vec.es <- latreg.es$a.vec
+  d1.vec.es <- latreg.es$d1.vec
+  d2.vec.es <- latreg.es$d2.vec
   
   knockoff.stat.record <- NULL
   num.copy <- 31
   # Derandomized knockoff
   for (copy in 1:num.copy) {
     Gibbs <- X.Gibbs.sample(X=X, X.under=X.under, XX=XX, XX.ind=XX.ind, Y=Y, Omega=Omega.es,
-                            a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec,
+                            a.vec=a.vec.es, d1.vec=d1.vec.es, d2.vec=d2.vec.es, #==Use estimated IRT model
                             beta=beta.es, theta.interp=theta.interp.es, theta.var=theta.var.es,
                             bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
                             bin.params=bin.params.es, ord.params=ord.params.es, 
@@ -135,7 +133,8 @@ run <- function(seed, N) {
     # MMLE
     # MMLE of joint latent regression model
     joint.latreg.es <- StEM(X=X, X.under=X.under, X.knock=X.knock, X.knock.under=X.knock.under, 
-                            Y=Y, Sigma=Sigma.es, S=S, a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec,
+                            Y=Y, Sigma=Sigma.es, S=S, 
+                            a.vec=a.vec.es, d1.vec=d1.vec.es, d2.vec=d2.vec.es, #==Use estimated IRT model
                             bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
                             bin.params=bin.params.es, ord.params=ord.params.es, con.params=con.params.es, 
                             max_iter=1000, burn_in=500, is.beta.trace=F, is.print.iter=T, is.knockoff=T)
@@ -147,7 +146,7 @@ run <- function(seed, N) {
                                con.params=con.params.es)
     stats <- knockoff.stat(beta.avg, X.scale)
     knockoff.stat.record <- rbind(knockoff.stat.record, stats)
-  }
+  }  
   
   select.res <- matrix(0, nrow = 5, ncol = p)  
   for (v in 1:5) {
@@ -158,7 +157,7 @@ run <- function(seed, N) {
     }
     select.res[v,] <- (colMeans(select.v) > 0.5) * 1
   }
-  save(estimate.res, latreg.es, knockoff.stat.record, select.res, file = paste0('./Simulation/Base_result_', N, '_', seed, '.RData'))
+  save(estimate.res, latreg.es, knockoff.stat.record, select.res, file = paste0('./Simulation/Base_EIRT_result_', N, '_', seed, '.RData'))
 }
 
 #######################
@@ -184,34 +183,27 @@ registerDoParallel(cl)
 foreach (seed = 1:100, .combine=cbind,  .packages = c('MASS', 'psych','truncnorm', 'Matrix','arstheta')) %dorng% run(seed = seed, N = 4000)
 stopCluster(cl)
 
-
-
 ###########
 # Results #
 ###########
-load('./Simulation/simulation_params.RData')
-
+N = 1000 # Modify N here, N = 1000, 2000, 4000
 ###########################
 ## Base selection result ##
 ###########################
-# Specify N here
-N <- 1000
-# N <- 2000
-# N <- 4000
-
 select.1 <- NULL
 select.2 <- NULL
 select.3 <- NULL
 select.4 <- NULL
 select.5 <- NULL
 for (seed in 1:100) {
-  load(paste0('./Simulation/Base_result_', N, '_', seed,'.RData'))
+  load(paste0('./Simulation/Base_EIRT_result_', N, '_', seed,'.RData'))
+  
   select.1 <- rbind(select.1, knockoff.select(knockoff.stat.record[1,], 1))
   select.2 <- rbind(select.2, knockoff.select(knockoff.stat.record[1,], 2))
   select.3 <- rbind(select.3, knockoff.select(knockoff.stat.record[1,], 3))
   select.4 <- rbind(select.4, knockoff.select(knockoff.stat.record[1,], 4))
   select.5 <- rbind(select.5, knockoff.select(knockoff.stat.record[1,], 5))
-}
+}   
 
 # PFER
 mean(rowSums(t(t(select.1 == 1) * (beta.true == 0))))
@@ -219,6 +211,7 @@ mean(rowSums(t(t(select.2 == 1) * (beta.true == 0))))
 mean(rowSums(t(t(select.3 == 1) * (beta.true == 0))))
 mean(rowSums(t(t(select.4 == 1) * (beta.true == 0))))
 mean(rowSums(t(t(select.5 == 1) * (beta.true == 0))))
+
 # TPR
 mean(rowSums(t(t(select.1 == 1) * (beta.true != 0))))
 mean(rowSums(t(t(select.2 == 1) * (beta.true != 0))))
@@ -229,18 +222,14 @@ mean(rowSums(t(t(select.5 == 1) * (beta.true != 0))))
 ###################################
 ## Derandomized selection result ##
 ###################################
-# Specify N here
-N <- 1000
-# N <- 2000
-# N <- 4000
-
 select.1 <- NULL
 select.2 <- NULL
 select.3 <- NULL
 select.4 <- NULL
 select.5 <- NULL
 for (seed in 1:100) {
-  load(paste0('./Simulation/Base_result_', N, '_', seed,'.RData'))
+  load(paste0('./Simulation/Base_EIRT_result_', N, '_', seed,'.RData'))
+  
   select.1 <- rbind(select.1, select.res[1,])
   select.2 <- rbind(select.2, select.res[2,])
   select.3 <- rbind(select.3, select.res[3,])

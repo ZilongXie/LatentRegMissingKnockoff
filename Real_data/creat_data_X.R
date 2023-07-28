@@ -1,3 +1,7 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
+
 ##############################
 # Extract data from sas file #
 ##############################

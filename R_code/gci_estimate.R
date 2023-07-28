@@ -38,14 +38,93 @@ con.params.init <- function(X, con.ind) {
   return(con.params)
 }
 
+# Compute initial values of parameters in measurement model for Z.
+# We only consider continuous indicators under normality assumption here.
+mea.init <- function(W.list, ...) {
+  # Number of unobserved variables
+  N <- nrow(W.list[[1]])
+  num.mea <- length(W.list)
+  args <- list(...)
+  mea.init <- list()
+  
+  if (!is.null(args$mea.params)) {
+    mea.init$params <- args$mea.params
+    
+    # Matrix of scores
+    mea.scores <- matrix(0, nrow = N, ncol = num.mea)
+    for (j in 1:num.mea) {
+      W <- W.list[[j]]
+      W.loadings <- args$mea.params$loadings[[j]]
+      W.errvar <- args$mea.params$errvar[[j]]
+      W.mean <- args$mea.params$mean[[j]]
+      
+      post.sd <- 1/sqrt(sum(W.loadings^2/W.errvar))
+      post.mean <- (rowSums((W - outer(rep(1, N), W.mean))
+                            * outer(rep(1, N), W.loadings/W.errvar))
+                    ) * post.sd^2
+      
+      mea.scores[,j] <- rnorm(mean = post.mean, 
+                              sd = post.sd,
+                              n = N)
+      
+    }
+    mea.init$scores <- mea.scores
+    
+  } else {
+    # List of parameters
+    mea.params <- list()
+    mea.params$mean <- list()
+    mea.params$loadings <- list()
+    mea.params$errvar <- list()
+    
+    # Matrix of scores
+    mea.scores <- matrix(0, nrow = N, ncol = num.mea)
+    
+    # Require package `psych`
+    if (!requireNamespace('psych', quietly=T)) {
+      stop('psych is not installed', call.=F)
+    }
+    
+    for (j in 1:num.mea) {
+      W <- W.list[[j]]
+      # Perform factor analysis
+      fa <- psych::fac(W, nfactors = 1, rotate = 'none', fm = 'ml')
+      W.sd <- sqrt(diag(cov(W)))
+      mea.params$mean[[j]] <- colMeans(W)
+      mea.params$loadings[[j]] <- as.vector(fa$loadings) * W.sd
+      mea.params$errvar[[j]]<- as.vector(fa$uniquenesses * W.sd**2)
+      mea.scores[,j] <- as.vector(fa$scores)
+    }
+    mea.init$params <- mea.params
+    mea.init$scores <- mea.scores
+  }
+  
+  return(mea.init)
+}
+
 # Compute initial values of correlation matrix.
-corr.init <- function(X, bin.ind, ord.ind, con.ind) {
+corr.init <- function(X, bin.ind, ord.ind, con.ind, X.mea=NULL) {
+  # Require package `psych`
   if (!requireNamespace('psych', quietly=T)) {
     stop('psych is not installed', call.=F)
   }
-    
-  fit <- psych::mixedCor(data = as.data.frame(X), c = con.ind, d = bin.ind, p = ord.ind,
-                         smooth = T, correct = T, global = FALSE)
+  
+  mea.ind <- NULL
+  if (is.null(X.mea)) {
+    X.data.frame <- as.data.frame(X)
+  } else {
+    num.mea <- ncol(X.mea)
+    mea.ind <- length(bin.ind) + length(ord.ind) + length(con.ind) + 1:num.mea
+    X.data.frame <- as.data.frame(cbind(X, X.mea))
+  }
+  
+  fit <- psych::mixedCor(data = X.data.frame,
+                         c = c(con.ind, mea.ind),
+                         d = bin.ind,
+                         p = ord.ind,
+                         smooth = T,
+                         correct = T,
+                         global = FALSE)
   
   return(fit$rho)
 }
@@ -81,6 +160,7 @@ correct.pd <- function(M, tol=1e-4, max.iter=1000) {
   if (!all.equal(M, t(M))) {
     stop('The input matrix is not symmetric!', call. = F)
   }
+  
   if (min(eigen(M)$value)> 0) {
     return(M)
   } else {
@@ -107,15 +187,25 @@ correct.pd <- function(M, tol=1e-4, max.iter=1000) {
         break
       }
     }
+    
     return(B %*% t(B))
   }
 }
 
 # Initialize underlying variables
 X.under.init <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
-                         thresh.bin=NULL, thresh.ord=NULL, con.params=NULL) {
-  X.under <-  matrix(nrow = dim(X)[1], ncol = dim(X)[2])
+                         thresh.bin=NULL, thresh.ord=NULL, con.params=NULL,
+                         X.mea = NULL) {
+  # Initialization
+  if (is.null(X.mea)) {
+    X.under <- matrix(nrow = dim(X)[1], ncol = dim(X)[2])
+  } else {
+    num.mea <- ncol(X.mea)
+    mea.ind <- length(bin.ind) + length(ord.ind) + length(con.ind) + 1:num.mea
+    X.under <- cbind(matrix(nrow = dim(X)[1], ncol = dim(X)[2]), X.mea)
+  }
   
+  # Require package `truncnorm`
   if (length(bin.ind) + length(ord.ind) > 0) {
     if (!requireNamespace('truncnorm', quietly=T)) {
       stop('truncnorm is not installed', call.=F)
@@ -154,10 +244,21 @@ X.under.init <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
 
 # One-round Gibbs sampling for underlying variables
 X.under.sample <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
-                           thresh.bin=NULL, thresh.ord=NULL, con.params=NULL,
-                           mat.params=NULL) {
-  p <- dim(X)[2]
+                           thresh.bin=NULL, thresh.ord=NULL, con.params=NULL, 
+                           mat.params=NULL, W.list=NULL, mea.ind=NULL, mea.params=NULL) {
+  
+  if (all(!is.null(W.list), !is.null(mea.ind), !is.null(mea.params))) {
+    num.mea <- length(mea.ind)
+    p <- ncol(X) + num.mea
+  } else {
+    p <- ncol(X)
+  }
+  N <- nrow(X)
   miss.mask <- is.na(X)
+  
+  # Check dimensions
+  stopifnot(ncol(X.under) == p)
+  stopifnot(all(dim(mat.params$Sigma)[1] == p, dim(mat.params$Omega)[1] == p))
   
   # The transformation matrix that transforms X.under_{-i} to the post-mean
   meantrans.matr <- matrix(nrow = p-1 , ncol = p)
@@ -175,6 +276,8 @@ X.under.sample <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
   
   # Random scan Gibbs sampling
   random.scan <- sample(p, p)
+  
+  # Gibbs sampler
   for (j in random.scan) {
     # Conditional mean and standard deviation
     cond.sd <- sqrt(1/mat.params$Omega[j, j])
@@ -186,6 +289,7 @@ X.under.sample <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                                        sd = cond.sd,
                                        n = sum(miss.mask.j))
     }
+    
     if (j %in% bin.ind) {
       loc <- which(bin.ind == j)
       X.under[, j] <- truncnorm::rtruncnorm(a = thresh.bin$lower[,loc],
@@ -194,6 +298,7 @@ X.under.sample <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                                             sd = cond.sd,
                                             n = 1)
     }
+    
     if (j %in% ord.ind) {
       loc <- which(ord.ind == j)
       X.under[, j] <- truncnorm::rtruncnorm(a = thresh.ord$lower[,loc],
@@ -202,19 +307,39 @@ X.under.sample <- function(X, X.under, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
                                             sd = cond.sd,
                                             n = 1)
     }
+    
+    if (j %in% mea.ind) {
+      loc <- which(mea.ind == j)
+      W <- W.list[[loc]]
+      W.loadings <- mea.params$loadings[[loc]]
+      W.errvar <- mea.params$errvar[[loc]]
+      W.mean <- mea.params$mean[[loc]]
+      
+      post.sd <- 1/sqrt(sum(W.loadings**2/W.errvar) + 1/cond.sd**2)
+      
+      post.mean <- (rowSums((W - outer(rep(1, N), W.mean))
+                            * outer(rep(1, N), W.loadings/W.errvar))
+                    + cond.mean/cond.sd**2) * post.sd**2
+
+      X.under[, j] <- rnorm(mean = post.mean, 
+                            sd = post.sd,
+                            n = N)
+    
+    }
   }
+  
   return(X.under)
 }
 
 # Compute first and second order derivatives of continuous marginal parameters
 con.params.derivs <- function(X, X.under, con.ind, con.params, mat.params, is.second = T) {
+  stopifnot(length(con.ind) > 0)
+  
   # Transform continuous variables
-  if (length(con.ind) > 0) {
-    X.under.con <- X.under[,con.ind]
-    X.under.con.obs <- t((t(X[, con.ind]) - con.params$mean)/con.params$sd)
-    X.under.con[!is.na(X[, con.ind])] <- X.under.con.obs[!is.na(X[, con.ind])]
-    X.under[,con.ind] <- X.under.con
-  }
+  X.under.con <- X.under[,con.ind]
+  X.under.con.obs <- t((t(X[, con.ind]) - con.params$mean)/con.params$sd)
+  X.under.con[!is.na(X[, con.ind])] <- X.under.con.obs[!is.na(X[, con.ind])]
+  X.under[,con.ind] <- X.under.con
   
   # Quantities to be used
   lognorm.grad.con.obs <- (X.under %*% mat.params$Omega)[,con.ind]
@@ -240,6 +365,8 @@ con.params.derivs <- function(X, X.under, con.ind, con.params, mat.params, is.se
 
 # Compute first and second order derivatives of binary marginal parameters
 bin.params.derivs <- function(X, X.under, bin.ind, bin.params, thresh.bin, mat.params, is.second = T) {
+  stopifnot(length(bin.ind) > 0)
+  
   mask <- is.na(X)
   derivs <- list()
   derivs$first <- rep(0, length(bin.ind))
@@ -276,8 +403,9 @@ bin.params.derivs <- function(X, X.under, bin.ind, bin.params, thresh.bin, mat.p
 
 # Compute first and second order derivatives of ordinal marginal parameters, for the reparametrized form
 ord.params.derivs <- function(X, X.under, ord.ind, ord.max, ord.levels.which, ord.params, thresh.ord, mat.params, is.second = T) {
-  miss.mask <- is.na(X)
+  stopifnot(length(ord.ind) > 0)
   
+  miss.mask <- is.na(X)
   derivs <- list()
   derivs$first <- matrix(0, nrow = length(ord.ind), ncol = max(ord.max))
   
@@ -312,7 +440,7 @@ ord.params.derivs <- function(X, X.under, ord.ind, ord.max, ord.levels.which, or
     }
     # The first derivatives of original parameters
     par.first <- par.upper.first + par.lower.first
-
+    
     # Chain rule for reparametrized parameters
     par.to.repar <- ord.params$repar[j,1:ord.max[j]]
     par.to.repar[1] <- 1
@@ -372,65 +500,96 @@ mat.params.derivs <- function(X.under, mat.params, is.second = T) {
                       - outer(diag(mat.params$Omega), rep(1, N)) %*% (X.under %*% t(inv.chol))^2
                       + N * diag(diag(inv.chol)^2))
   }
+  
   return(derivs)
 }
 
 # Estimation of Gaussian copula model
-GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL, 
-                         eps=1e-2, max.iter=500, burn.in=300, print.iter=F, 
-                         print.max.change = F, is.params.trace=F, 
-                         is.return.under=F, ...) {
-  if (length(bin.ind) + length(ord.ind) + length(con.ind) != dim(X)[2]) {
+GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
+                         eps=1e-2, max.iter=500, burn.in=300, print.iter=F,
+                         print.max.change=F, is.params.trace=F,
+                         is.return.under=F, W.list=NULL, ...) {
+
+  if (length(bin.ind) + length(ord.ind) + length(con.ind) != ncol(X)) {
     stop('Dimensions of indices are wrong! Check your input indices.')
   }
-  
+
   args <- list(...)
-  N <- dim(X)[1]
-  p <- dim(X)[2]
+  N <- nrow(X)
+  p <- ncol(X)
+
+  mea.ind <- NULL
+  if (!is.null(W.list)) {
+    num.mea <- length(W.list)
+    mea.ind <- length(bin.ind) + length(ord.ind) + length(con.ind) + 1:num.mea
+    p <- ncol(X) + num.mea
+  }
+
   miss.mask <- is.na(X)
   col.num_iss <- colSums(miss.mask)
   params.avg <- list()
-  
+
   # Record the trace of parameters if required
   if (is.params.trace) {
-    params.trace <- list()  
+    params.trace <- list()
   }
-  
-  # Compute initial values of marginal parameters and thresholds 
+
+  # Compute initial values of marginal parameters and thresholds
+  # Parameters in measurement models
+  mea.params <- NULL
+  X.mea <- NULL
+  if (length(mea.ind) > 0) {
+    if (!is.null(args$mea.params)) {
+      mea.params <- args$mea.params
+      
+      stopifnot(all(length(mea.params$mean) == length(mea.ind),
+                    length(mea.params$loadings) == length(mea.ind),
+                    length(mea.params$errvar) == length(mea.ind)))
+    }
+    
+    mea.init.res <- mea.init(W.list=W.list, mea.params=mea.params)
+    mea.params <- mea.init.res$params
+    X.mea <- mea.init.res$scores
+    params.avg$mea.params <- mea.params
+  }
+
   # Continuous parameters
+  con.params <- NULL
   if (length(con.ind) > 0) {
     if (is.null(args$con.params0)) {
       # Initialize parameters if initial values are not provided
-      con.params <- con.params.init(X, con.ind)
+      con.params <- con.params.init(X=X, con.ind=con.ind)
     } else {
       con.params <- args$con.params0
     }
-    
+
     # Record trace of parameters
     if (is.params.trace) {
       params.trace$con.params.mean <- cbind(params.trace$con.params.mean, con.params$mean)
       params.trace$con.params.sd <- cbind(params.trace$con.params.sd, con.params$sd)
     }
-    
+
     # Initialize averaged continuous parameters
     params.avg$con.params.mean <- 0
     params.avg$con.params.sd <- 0
   }
-  
+
   # Binary parameters
+  thresh.bin <- NULL
+  bin.params <- NULL
   if (length(bin.ind) > 0) {
     if (!all(apply(X[,bin.ind], 2, min, na.rm = T) == 0) ||
         !all(apply(X[,bin.ind], 2, max, na.rm = T) == 1)) {
       stop('Binary variables should be 0-1 coded!', call. = F)
     }
-    
+
     if (is.null(args$bin.params0)) {
       # Initialize parameters if initial values are not provided
-      bin.params <- bin.params.init(X, bin.ind)  
+      bin.params <- bin.params.init(X=X, bin.ind=bin.ind)
     } else {
       bin.params <- args$bin.params0
     }
-    
+
     # Record which samples fall in the same levels
     bin.levels.which <- list()
     for (j in 1:length(bin.ind)) {
@@ -441,46 +600,47 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
       }
       bin.levels.which[[j]] <- bin.levels.which.j
     }
-    
+
     # Thresholds of binary variables
     thresh.bin <- list(lower = matrix(-Inf, nrow = N, ncol = length(bin.ind)),
                        upper = matrix(Inf, nrow = N, ncol = length(bin.ind)))
     for (j in 1:length(bin.ind)) {
       thresh.bin$lower[bin.levels.which[[j]][[2]], j] <- bin.params[j]
-      thresh.bin$upper[bin.levels.which[[j]][[1]], j] <- bin.params[j] 
+      thresh.bin$upper[bin.levels.which[[j]][[1]], j] <- bin.params[j]
     }
-    
+
     # Record trace of parameters
     if (is.params.trace) {
       params.trace$bin.params <- cbind(params.trace$bin.params, bin.params)
     }
-    
+
     # Initialize averaged binary parameters
     params.avg$bin.params <- 0
   }
-  
+
   # Ordinal parameters
+  thresh.ord <- NULL
+  ord.params <- NULL
   if (length(ord.ind) > 0) {
     if (!all(apply(X[,ord.ind], 2, min, na.rm = T) == 0)) {
       stop('Ordinal variables should start from 0!', call. = F)
     }
-    
+
     ord.max <- apply(X[,ord.ind], 2, max, na.rm = T)
-    
+
     if (is.null(args$ord.params0)) {
       # Initialize parameters if initial values are not provided
-      ord.params <- ord.params.init(X, ord.max, ord.ind)
+      ord.params <- ord.params.init(X=X, ord.max=ord.max, ord.ind=ord.ind)
     } else {
       if(is.null(args$ord.params0$par) || is.null(args$ord.params0$repar)) {
         stop('Please provide initial values fro both the raw parameres and reparametrized parameters.', call. = F)
-        ord.params <- ord.params.init(X, ord.max, ord.ind)
+        ord.params <- ord.params.init(X=X, ord.max=ord.max, ord.ind=ord.ind)
       }
       else {
         ord.params <- args$ord.params0
       }
     }
-    
-    
+
     # Record which samples fall in the same level
     ord.levels.which <- list()
     for (j in 1:length(ord.ind)) {
@@ -491,13 +651,13 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
       }
       ord.levels.which[[j]] <- ord.levels.which.j
     }
-    
+
     # Thresholds of ordinal variables
     thresh.ord <- list(lower = matrix(-Inf, nrow = N, ncol = length(ord.ind)),
                        upper = matrix(Inf, nrow = N, ncol = length(ord.ind)))
     for (j in 1:length(ord.ind)) {
       for (v in 1:(ord.max[j]+1)) {
-        if (v > 1){
+        if (v > 1) {
           thresh.ord$lower[ord.levels.which[[j]][[v]], j] <- ord.params$par[j, v-1]
         }
         if (v < (ord.max[j]+1)) {
@@ -505,102 +665,114 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
         }
       }
     }
-    
+
     # Record trace of parameters
     if (is.params.trace) {
       params.trace$ord.params.vec <- cbind(params.trace$ord.params.vec, as.vector(ord.params$par))
     }
-    
+
     # Initialize averaged ordinal parameters
     params.avg$ord.params <- 0
   }
-  
-  
+
+  # Correlation matrix
   if (is.null(args$Sigma0)) {
     # Initialize correlation matrix if initial values are not provided
-    Sigma <- correct.pd(corr.init(X, bin.ind, ord.ind, con.ind))
+    Sigma <- correct.pd(corr.init(X=X, bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, X.mea=X.mea))
     Sigma.chol <- t(chol(Sigma))
     Omega <- solve(Sigma)
     mat.params <- list(Sigma = Sigma, Omega = Omega, Sigma.chol = Sigma.chol)
-    
+
   } else {
     Sigma <- correct.pd(args$Sigma0)
     Sigma.chol <- t(chol(Sigma))
     Omega <- solve(Sigma)
     mat.params <- list(Sigma = Sigma, Omega = Omega, Sigma.chol = Sigma.chol)
   }
-  
-  
+
   # Record trace of parameters
   if (is.params.trace) {
     params.trace$Sigma.lower <- cbind(params.trace$Sigma.lower, as.vector(mat.params$Sigma[lower.tri(mat.params$Sigma)]))
   }
-  
+
   # Initialize averaged correlation matrix
   params.avg$Sigma <- 0
-  
+
   # Initialize underlying variables
-  X.under <- X.under.init(X, bin.ind, ord.ind, con.ind, 
-                          thresh.bin, thresh.ord, con.params)
-  
-  # If required, perform additional Gibbs sampling at the initialization stage 
+  X.under <- X.under.init(X=X, bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind,
+                          thresh.bin=thresh.bin, thresh.ord=thresh.ord,
+                          con.params=con.params, X.mea=X.mea)
+
+  # If required, perform additional Gibbs sampling at the initialization stage
   # for better mixing
   if (!is.null(args$init.Gibbs.round)) {
     for (num in 1:args$init.Gibbs.round) {
-      X.under <- X.under.sample(X, X.under, bin.ind, ord.ind, con.ind, 
-                                thresh.bin, thresh.ord, con.params, mat.params)
+      X.under <- X.under.sample(X=X, X.under=X.under, bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind,
+                                thresh.bin=thresh.bin, thresh.ord=thresh.ord, con.params=con.params,
+                                mat.params=mat.params, W.list=W.list, mea.ind=mea.ind, mea.params=mea.params)
     }
   }
-  
+
+  # Record maximum change
+  if (print.max.change) {
+    max.change <- c()
+    params.old <- c(unlist(con.params), unlist(bin.params),
+                    unlist(ord.params), unlist(mat.params))
+  }
+
   # Store second order derivatives
   second.derivs <- list()
   
   # Proximal stochastic gradient algorithm
   for (t in 1:max.iter) {
     # Print iterations
-    if (print.iter){
+    if (print.iter) {
       print(t)
     }
-    
+
     # Sampling step
-    X.under <- X.under.sample(X, X.under, bin.ind, ord.ind, con.ind, 
-                              thresh.bin, thresh.ord, con.params, mat.params)
-    
+    X.under <- X.under.sample(X=X, X.under=X.under, bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind,
+                              thresh.bin=thresh.bin, thresh.ord=thresh.ord, con.params=con.params,
+                              mat.params=mat.params, W.list=W.list, mea.ind=mea.ind, mea.params=mea.params)
+
     # Update approximate Hessian diagonal matrix during burn-in period
     if (t <= burn.in) {
       is.second <- TRUE
     } else {
       is.second <- FALSE
     }
-    
+
     # Stepsize
-    step.size <- t^(-0.51)
-    
+    step.size <- (t+100)^(-0.51)
+
     # Update continuous marginal parameters
     if (length(con.ind) > 0) {
-      con.derivs <- con.params.derivs(X, X.under, con.ind, con.params, mat.params, is.second)
+      con.derivs <- con.params.derivs(X=X, X.under=X.under, con.ind=con.ind,
+                                      con.params=con.params, mat.params=mat.params,
+                                      is.second=is.second)
 
       if (is.second) {
         second.derivs$con.params.mean <- con.derivs$second$mean
         second.derivs$con.params.sd <- con.derivs$second$sd
-        
         # TODO: truncation
       }
 
       # Update parameters
       con.params$mean <- con.params$mean - step.size * con.derivs$first$mean/second.derivs$con.params.mean
       con.params$sd <- con.params$sd - step.size * con.derivs$first$sd/second.derivs$con.params.sd
-      
+
       # Record trace of parameters
       if (is.params.trace) {
         params.trace$con.params.mean <- cbind(params.trace$con.params.mean, con.params$mean)
         params.trace$con.params.sd <- cbind(params.trace$con.params.sd, con.params$sd)
       }
     }
-    
+
     # Update binary marginal parameters
     if (length(bin.ind) > 0) {
-      bin.derivs <- bin.params.derivs(X, X.under, bin.ind, bin.params, thresh.bin, mat.params, is.second)
+      bin.derivs <- bin.params.derivs(X=X, X.under=X.under, bin.ind=bin.ind, bin.params=bin.params,
+                                      thresh.bin=thresh.bin, mat.params=mat.params,
+                                      is.second=is.second)
 
       if (is.second) {
         second.derivs$bin.params <- bin.derivs$second
@@ -609,23 +781,25 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
 
       # Update parameters
       bin.params <- bin.params - step.size * bin.derivs$first/second.derivs$bin.params
-      # TODO: truncation
-      
+
       # Record trace of parameters
       if (is.params.trace) {
         params.trace$bin.params <- cbind(params.trace$bin.params, bin.params)
       }
-      
+
       # Update thresholds
       for (j in 1:length(bin.ind)) {
         thresh.bin$lower[bin.levels.which[[j]][[2]], j] <- bin.params[j]
         thresh.bin$upper[bin.levels.which[[j]][[1]], j] <- bin.params[j]
       }
     }
-    
+
     # Update ordinal marginal parameters
     if (length(ord.ind) > 0) {
-      ord.derivs <- ord.params.derivs(X, X.under, ord.ind, ord.max, ord.levels.which, ord.params, thresh.ord, mat.params, is.second)
+      ord.derivs <- ord.params.derivs(X=X, X.under=X.under, ord.ind=ord.ind,
+                                      ord.max=ord.max, ord.levels.which=ord.levels.which,
+                                      ord.params=ord.params, thresh.ord=thresh.ord,
+                                      mat.params=mat.params, is.second=is.second)
 
       if (is.second) {
         second.derivs$ord.params <- ord.derivs$second
@@ -637,44 +811,52 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
       ord.params$par <- ord.params$repar
       ord.params$par[,-1] <- exp(ord.params$repar[,-1])
       ord.params$par <- t(apply(ord.params$par, 1, cumsum))
-      # TODO: truncation
-      
+
       # Record trace of parameters
       if (is.params.trace) {
         params.trace$ord.params.vec <- cbind(params.trace$ord.params.vec, as.vector(ord.params$par))
       }
-      
+
       # Update thresholds
       for (j in 1:length(ord.ind)) {
         for (v in 1:(ord.max[j]+1)) {
-          if (v > 1){
+          if (v > 1) {
             thresh.ord$lower[ord.levels.which[[j]][[v]], j] <- ord.params$par[j, v-1]
           }
-          if (v < (ord.max[j]+1)){
+          if (v < (ord.max[j]+1)) {
             thresh.ord$upper[ord.levels.which[[j]][[v]], j] <- ord.params$par[j, v]
           }
         }
       }
     }
-    
+
     # Update correlation marginal parameters
-    mat.derivs <- mat.params.derivs(X.under, mat.params, is.second)
+    mat.derivs <- mat.params.derivs(X.under=X.under, mat.params=mat.params, is.second=is.second)
     if (is.second) {
       second.derivs$mat.params <- mat.derivs$second
       # TODO: truncation
     }
+
     mat.params$Sigma.chol <- mat.params$Sigma.chol - step.size * mat.derivs$first/second.derivs$mat.params
     row.norm <- sqrt(rowSums(mat.params$Sigma.chol^2))
     mat.params$Sigma.chol <- mat.params$Sigma.chol/row.norm
     mat.params$Sigma <- mat.params$Sigma.chol %*% t(mat.params$Sigma.chol)
     mat.params$Omega <- solve(mat.params$Sigma)
-    
+
     # Record trace of parameters
     if (is.params.trace) {
       params.trace$Sigma.lower <- cbind(params.trace$Sigma.lower, as.vector(mat.params$Sigma[lower.tri(mat.params$Sigma)]))
     }
-    
-    # Polyak-Ruppert averaging 
+
+    # Monitoring max-change
+    if (print.max.change) {
+      temp <- c(unlist(con.params), unlist(bin.params),
+                unlist(ord.params), unlist(mat.params))
+      max.change <- c(max.change, max(abs(temp-params.old)))
+      params.old <- temp
+    }
+
+    # Polyak-Ruppert averaging
     if (t >= burn.in) {
       t.avg <- t-burn.in
       if (length(con.ind) > 0) {
@@ -688,49 +870,24 @@ GCI.estimate <- function(X, bin.ind=NULL, ord.ind=NULL, con.ind=NULL,
         params.avg$ord.params <- (t.avg * params.avg$ord.params + ord.params$par)/(t.avg + 1)
       }
       params.avg$Sigma <- (t.avg * params.avg$Sigma + mat.params$Sigma)/(t.avg + 1)
-      
-      # Max-change
-      max.change <- 0
-      if (t.avg > 1) {
-        if (length(con.ind) > 0) {
-          m1 <- max(abs(params.avg$con.params.mean - params.avg.old$con.params.mean))
-          m2 <- max(abs(params.avg$con.params.sd - params.avg.old$con.params.sd))
-          max.change <- max(max.change, m1, m2)
-        }
-        if (length(bin.ind) > 0) {
-          m3 <- max(abs(params.avg$bin.params - params.avg.old$bin.params))
-          max.change <- max(max.change, m3)
-        }
-        if (length(ord.ind) > 0) {
-          m4 <- max(abs(params.avg$ord.params - params.avg.old$ord.params))
-          max.change <- max(max.change, m4)
-        }
-        m5 <- max(abs(params.avg$Sigma - params.avg.old$Sigma))
-        max.change <- max(max.change, m5)
-        if (print.max.change) {
-          print(max.change)
-        }
-      }
-      
-      params.avg.old <- params.avg
     }
 
-    #TODO:Stopping criterion
+    #TODO:Add stopping criterion
   }
-  
+
   # Results
   results <- list()
   results$params.avg <- params.avg
-  
+
   # Trace of parameters
   if (is.params.trace) {
     results$params.trace <- params.trace
   }
-  
+
   # Return underlying variables
   if (is.return.under) {
     results$X.under <- X.under
   }
-  
+
   return(results)
 }

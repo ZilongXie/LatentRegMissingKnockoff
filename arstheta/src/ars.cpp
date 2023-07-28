@@ -323,7 +323,7 @@ public:
   double xrb;
   int max_points;
   
-  const static int MAX_REJECTIONS = 500;
+  const static int MAX_REJECTIONS = 100000;
   
   ARS() {}; // Default constructor
   
@@ -454,8 +454,10 @@ public:
       }
       
       if (rejections > MAX_REJECTIONS) {
-        Rcout << "Warning: Maximum number of rejections reached. Returning zero sample." << endl;
-        samples.push_back(0);
+        // Rcout << "Warning: Maximum number of rejections reached. Returning current sample." << endl;
+        // samples.push_back(x_sample);
+        Rcout << "Error: Maximum number of rejections reached." << endl;
+        stop("Maximum number of rejections reached");
       }
       
       checkUserInterrupt();
@@ -527,13 +529,13 @@ public:
     
     // Check arguments
     if (avec.size() != J || d1vec.size() != J || d2vec.size() != J) {
-      stop("Y_i, avec, d1vec and d2vec must be of same length.");
+      stop("Y_i, avec, d1vec and d2vec must have same length.");
     }
     if (mu.size() != N) {
       stop("length of mu does not equal to sample size.");
     }
-    if (var <= 0) {
-      stop("Input variance should be larger than 0!");
+    if (var <= 1e-4) {
+      stop("Input variance is too small!");
     }
     
     // Make the densities
@@ -544,14 +546,18 @@ public:
     }
   };
   
-  NumericVector sample(NumericVector theta_init_lower, NumericVector theta_init_upper) {
+  NumericVector sample(NumericVector theta_init) {
     
     // Make the samplers
     vector<ARS> samplers;
     for (int i = 0; i < N; ++i) {
-      // Sampler
-      NumericVector theta_init_i = NumericVector::create(theta_init_lower.at(i), theta_init_upper.at(i));
-      ARS ars(&densities.at(i), theta_init_i, -numeric_limits<double>::infinity(), numeric_limits<double>::infinity(), 100);
+      // Initialize sampler with 5 starting points, with at most 100 points in hulls.
+      NumericVector theta_init_i = NumericVector::create(theta_init.at(i) - 2, 
+                                                         theta_init.at(i),
+                                                         theta_init.at(i) + 1,
+                                                         theta_init.at(i) + 3,
+                                                         theta_init.at(i) + 5);
+      ARS ars(&densities.at(i), theta_init_i, theta_init.at(i)-100, theta_init.at(i)+100, 100);
       samplers.push_back(ars);
     };
     

@@ -1,3 +1,7 @@
+# Set working directory as the folder downloaded from 
+# https://github.com/ZilongXie/LatentRegMissingKnockoff
+setwd('') 
+
 source('./R_code/gci_estimate.R')
 source('./R_code/knockoff_construct.R')
 source('./R_code/knockoff_select.R')
@@ -11,13 +15,13 @@ bin.ind <- 1:20
 ord.ind <- 21:33
 con.ind <- 34:62
 
-set.seed(123456789)
-estimate.res <- GCI.estimate(X, 
+set.seed(123456789, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind='default')
+estimate.res <- GCI.estimate(X = X, 
                              bin.ind = bin.ind,
                              ord.ind = ord.ind,
                              con.ind = con.ind,
-                             max.iter = 1000,
-                             burn.in = 500,
+                             max.iter = 10000,
+                             burn.in = 5000,
                              print.iter = T,
                              is.params.trace = T,
                              is.return.under = T,
@@ -33,10 +37,13 @@ X.under0 <- estimate.res$X.under
 S <- MVR.knockoffs(Sigma.es)
 print(min(diag(S)))
 
-latreg.es <- StEM(X, X.under0, NULL, NULL, Y, Sigma.es, NULL, a.vec, d1.vec, d2.vec,
-                  bin.ind, ord.ind, con.ind, bin.params.es, ord.params.es, con.params.es, 
-                  eps = 1e-2, max_iter = 1000, burn_in = 500, is.beta.trace=T,
-                  is.print.iter=T, is.knockoff = F)
+latreg.es <- StEM(X=X, X.under=X.under0, X.knock=NULL, X.knock.under=NULL, Y=Y, 
+                  Sigma=Sigma.es, S=NULL, a.vec=a.vec, d1.vec=d1.vec, d2.vec=d2.vec, 
+                  bin.ind=bin.ind, ord.ind=ord.ind, con.ind=con.ind, 
+                  bin.params=bin.params.es, ord.params=ord.params.es, con.params=con.params.es, 
+                  max_iter=2000, burn_in=1000, is.beta.trace=T, is.print.iter=T, 
+                  is.knockoff=F, lambda=0) # Linear regression
+
 beta.es <- latreg.es$beta
 X.under <- latreg.es$X.under
 theta.interp.es <- latreg.es$interp

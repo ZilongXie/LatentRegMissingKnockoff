@@ -1,10 +1,9 @@
-# Set working directory as the folder downloaded from 
+# Set working directory as the folder downloaded from
 # https://github.com/ZilongXie/LatentRegMissingKnockoff
-setwd('') 
+setwd('')
 
-################################################################################
 ########################
-## Correlation matrix ##  
+## Correlation matrix ##
 ########################
 J <- 60
 p <- 100
@@ -48,10 +47,10 @@ y <- 99:0
 corrplot <- expand.grid(X=x, Y=y)
 corrplot$Correlation <- as.vector(Sigma.true)
 
-# Heatmap 
-ggplot(corrplot, aes(X, Y, fill= Correlation)) + 
+# Heatmap
+ggplot(corrplot, aes(X, Y, fill= Correlation)) +
   geom_tile() +
-  scale_fill_gradient2(low="white", high="black", breaks = (0:5)/5) + 
+  scale_fill_gradient2(low="white", high="black", breaks = (0:5)/5) +
   scale_x_continuous(expand = c(0,0), breaks= seq(10, 90, 20) - 0.5, limits = c(0, 99), labels = c('Block1','Block2','Block3','Block4','Block5')) +
   scale_y_continuous(expand = c(0,0), breaks= seq(10, 90, 20) - 0.5, limits = c(0, 99), labels = c('Block5','Block4','Block3','Block2','Block1')) +
   theme(panel.background = element_rect(fill = 'NA'),
@@ -59,7 +58,7 @@ ggplot(corrplot, aes(X, Y, fill= Correlation)) +
         panel.grid.major = element_blank(),
         axis.text = element_text(size = 10),
         axis.title.x = element_blank(),
-        axis.title.y = element_blank()) 
+        axis.title.y = element_blank())
 
 
 ########################
@@ -74,16 +73,7 @@ con.params.true$sd <- rep(1, 50)
 bin.params.true <- as.vector(matrix(c(-1.2, -0.3, 0, 0.3, 1.2), nrow = 5, ncol = 10))
 ord.params.true <- NULL
 beta.true <- rep(0, 100)
-# beta.true[c(1,2,21,22,41,51,61,71,81,91)] <- c(1, -1, 1, -1, 0.75, -0.75, 0.5, -0.5, 0.25, -0.25)/5
-
 beta.true[c(1,11,22,32,43,53,64,74,85,95)] <- c(1, -1, 1, -1, 1, -1, 1, -1, 1, -1)/2
-
-#################################
-## Missing at random paramters ##
-#################################
-expit <- function(x) {1/(1+exp(-x))}
-# MAR derived from means of the fifth-block
-# c(-1, 1/20, 1/20, ..., 1/20)
 
 ####################
 ## IRT parameters ##
